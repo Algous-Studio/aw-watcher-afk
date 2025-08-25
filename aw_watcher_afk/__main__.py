@@ -1,12 +1,13 @@
 from aw_core.log import setup_logging
-
-from aw_watcher_afk.afk import AFKWatcher
+from aw_watcher_afk.afk import AFKWatcher, running_over_ssh
 from aw_watcher_afk.config import parse_args
-
 
 def main() -> None:
     args = parse_args()
-
+    if running_over_ssh():
+        # логируем и спокойно выходим
+        print("SSH session detected – afk watcher disabled for remote login")
+        return
     # Set up logging
     setup_logging(
         "aw-watcher-afk",
