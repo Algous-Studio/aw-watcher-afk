@@ -14,6 +14,32 @@ from .config import load_config
 
 system = platform.system()
 
+def _normalize_hostname(h: str) -> str:
+    """
+    Нормализуем hostname:
+      - нижний регистр
+      - отбрасываем доменную часть (оставляем всё до первой точки)
+    """
+    if not h:
+        return "unknown"
+    h = h.strip().lower()
+    if "." in h:
+        h = h.split(".", 1)[0]
+    return h or "unknown"
+
+
+def _resolve_identity(default_username: str, default_hostname: str) -> tuple[str, str]:
+    """
+    Возвращает (username, hostname) с учётом env-override:
+      AW_USERNAME_OVERRIDE, AW_HOSTNAME_OVERRIDE.
+    Hostname нормализуем под короткий стиль (fx26 и т.п.).
+    """
+    username = os.environ.get("AW_USERNAME_OVERRIDE", "").strip() or default_username
+    hostname_raw = os.environ.get("AW_HOSTNAME_OVERRIDE", "").strip() or default_hostname
+    hostname = _normalize_hostname(hostname_raw)
+    return username, hostname
+
+
 if system == "Windows":
     # noreorder
     from .windows import seconds_since_last_input  # fmt: skip
@@ -88,13 +114,33 @@ class AFKWatcher:
         self.settings = Settings(
             load_config(testing), timeout=args.timeout, poll_time=args.poll_time
         )
-        username = get_logged_in_user()
+        username_default = get_logged_in_user()
         self.client = ActivityWatchClient(
             "aw-watcher-afk", host=args.host, port=args.port, testing=testing
         )
-        self.bucketname = "{}-afk_{}".format(
-            username, self.client.client_hostname
-        )
+
+        cfg = load_config(testing)
+        cfg_user = (cfg.get("username_override") or "").strip()
+        cfg_host = (cfg.get("hostname_override") or "").strip()
+
+        env_user = (os.environ.get("AW_USERNAME_OVERRIDE") or "").strip()
+        env_host = (os.environ.get("AW_HOSTNAME_OVERRIDE") or "").strip()
+
+        cli_user = (getattr(args, "username_override", "") or "").strip()
+        cli_host = (getattr(args, "hostname_override", "") or "").strip()
+
+        username_eff = cli_user or env_user or cfg_user or username_default
+        hostname_eff_raw = cli_host or env_host or cfg_host or self.client.client_hostname
+
+        hostname_eff = _normalize_hostname(hostname_eff_raw)
+
+        try:
+            self.client.client_hostname = hostname_eff
+        except Exception:
+            pass
+
+        self.bucketname = f"{username_eff}-afk_{hostname_eff}"
+
 
     def ping(self, afk: bool, timestamp: datetime, duration: float = 0):
         data = {"status": "afk" if afk else "not-afk"}
